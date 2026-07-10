@@ -41,6 +41,18 @@
     z-index:1000;
     mix-blend-mode:overlay;
   }
+  /* deep-space backdrop: soft nebula wash behind the whole page */
+  body::after{
+    content:"";
+    position:fixed;inset:0;
+    z-index:-1;
+    background:
+      radial-gradient(ellipse 60% 45% at 22% 8%, rgba(124,77,255,0.16), transparent 60%),
+      radial-gradient(ellipse 55% 40% at 82% 12%, rgba(0,229,255,0.12), transparent 60%),
+      radial-gradient(ellipse 70% 60% at 50% 100%, rgba(124,77,255,0.10), transparent 65%),
+      var(--void);
+    pointer-events:none;
+  }
   a{color:inherit;text-decoration:none;}
 
   /* ---------- nav ---------- */
@@ -93,7 +105,19 @@
     display:flex;align-items:center;justify-content:center;gap:10px;
   }
   .eyebrow .line{width:24px;height:1px;background:var(--cyan);opacity:0.5;}
+  .wordmark{
+    font-family:var(--display);
+    font-weight:700;
+    font-size:clamp(15px,2.4vw,19px);
+    letter-spacing:0.42em;
+    text-transform:uppercase;
+    color:#fff;
+    text-shadow:0 0 22px rgba(0,229,255,0.55), 0 0 46px rgba(124,77,255,0.4);
+    margin-bottom:28px;
+    opacity:0.95;
+  }
   h1{
+    position:relative;
     font-family:var(--display);
     font-weight:700;
     font-size:clamp(40px, 7vw, 84px);
@@ -104,6 +128,10 @@
     background-clip:text;
     color:transparent;
     margin-bottom:22px;
+    filter:drop-shadow(0 0 26px rgba(0,229,255,0.35)) drop-shadow(0 0 54px rgba(124,77,255,0.28));
+  }
+  .brand{
+    text-shadow:0 0 18px rgba(0,229,255,0.35);
   }
   .hero p{
     font-size:clamp(15px,2vw,18px);
@@ -267,6 +295,7 @@
 <section class="hero">
   <canvas id="hero-canvas"></canvas>
   <div class="hero-content">
+    <div class="wordmark">Tehzeeb AI OS</div>
     <div class="eyebrow"><span class="line"></span> Personal AI, with restraint <span class="line"></span></div>
     <h1>An operating system<br/>with tehzeeb.</h1>
     <p>Tehzeeb means manners — the discipline of knowing when to speak and when to listen. <b>Tehzeeb AI OS</b> is a personal AI layer built on that idea: powerful, but never noisy.</p>
@@ -366,21 +395,83 @@
   resize();
   window.addEventListener('resize', resize);
 
+  // soft glow texture used for bloom sprites + star points
+  function glowTexture(hex){
+    const c = document.createElement('canvas'); c.width=c.height=128;
+    const ctx = c.getContext('2d');
+    const g = ctx.createRadialGradient(64,64,0,64,64,64);
+    g.addColorStop(0, hex+'ff');
+    g.addColorStop(0.35, hex+'88');
+    g.addColorStop(1, hex+'00');
+    ctx.fillStyle = g; ctx.fillRect(0,0,128,128);
+    return new THREE.CanvasTexture(c);
+  }
+  const cyanGlowTex = glowTexture('#00e5ff');
+  const violetGlowTex = glowTexture('#7c4dff');
+  const whiteGlowTex = glowTexture('#ffffff');
+
   const group = new THREE.Group();
   scene.add(group);
 
-  // wireframe icosahedron core
+  // deep-space starfield — distant, twinkling, always visible behind the network
+  const STAR_COUNT = 1400;
+  const starGeo = new THREE.BufferGeometry();
+  const starPos = new Float32Array(STAR_COUNT*3);
+  const starPhase = new Float32Array(STAR_COUNT);
+  for(let i=0;i<STAR_COUNT;i++){
+    const r = 14 + Math.random()*30;
+    const theta = Math.random()*Math.PI*2;
+    const phi = Math.acos((Math.random()*2)-1);
+    starPos[i*3]   = r*Math.sin(phi)*Math.cos(theta);
+    starPos[i*3+1] = r*Math.sin(phi)*Math.sin(theta);
+    starPos[i*3+2] = r*Math.cos(phi);
+    starPhase[i] = Math.random()*Math.PI*2;
+  }
+  starGeo.setAttribute('position', new THREE.BufferAttribute(starPos,3));
+  const starMat = new THREE.PointsMaterial({ map:whiteGlowTex, color:0xffffff, size:0.16, transparent:true, opacity:0.85, depthWrite:false, blending:THREE.AdditiveBlending, sizeAttenuation:true });
+  const starField = new THREE.Points(starGeo, starMat);
+  scene.add(starField);
+
+  // wireframe icosahedron core — the glowing geometric network structure
   const coreGeo = new THREE.IcosahedronGeometry(2.1, 1);
-  const coreMat = new THREE.MeshBasicMaterial({ color:0x00e5ff, wireframe:true, transparent:true, opacity:0.55 });
-  const core = new THREE.Mesh(coreGeo, coreMat);
+  const coreEdges = new THREE.EdgesGeometry(coreGeo);
+  const coreMat = new THREE.LineBasicMaterial({ color:0x00e5ff, transparent:true, opacity:0.75, blending:THREE.AdditiveBlending });
+  const core = new THREE.LineSegments(coreEdges, coreMat);
   group.add(core);
 
   const coreGeo2 = new THREE.IcosahedronGeometry(1.55, 1);
-  const coreMat2 = new THREE.MeshBasicMaterial({ color:0x7c4dff, wireframe:true, transparent:true, opacity:0.4 });
-  const core2 = new THREE.Mesh(coreGeo2, coreMat2);
+  const coreEdges2 = new THREE.EdgesGeometry(coreGeo2);
+  const coreMat2 = new THREE.LineBasicMaterial({ color:0x7c4dff, transparent:true, opacity:0.6, blending:THREE.AdditiveBlending });
+  const core2 = new THREE.LineSegments(coreEdges2, coreMat2);
   group.add(core2);
 
-  // orbiting particle field
+  // glowing nodes at the outer network's vertices
+  const nodePositions = coreGeo.attributes.position;
+  const nodeGroup = new THREE.Group();
+  const seenVerts = new Set();
+  for(let i=0;i<nodePositions.count;i++){
+    const x = nodePositions.getX(i), y = nodePositions.getY(i), z = nodePositions.getZ(i);
+    const key = x.toFixed(2)+','+y.toFixed(2)+','+z.toFixed(2);
+    if(seenVerts.has(key)) continue;
+    seenVerts.add(key);
+    const useCyan = Math.random() > 0.4;
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: useCyan ? cyanGlowTex : violetGlowTex, transparent:true, opacity:0.9, blending:THREE.AdditiveBlending, depthWrite:false }));
+    sprite.position.set(x,y,z);
+    const s = 0.34 + Math.random()*0.22;
+    sprite.scale.set(s,s,s);
+    nodeGroup.add(sprite);
+  }
+  group.add(nodeGroup);
+
+  // soft central bloom, simulating a photorealistic glow at the network's core
+  const bloom = new THREE.Sprite(new THREE.SpriteMaterial({ map:cyanGlowTex, transparent:true, opacity:0.35, blending:THREE.AdditiveBlending, depthWrite:false }));
+  bloom.scale.set(6.5,6.5,6.5);
+  group.add(bloom);
+  const bloom2 = new THREE.Sprite(new THREE.SpriteMaterial({ map:violetGlowTex, transparent:true, opacity:0.28, blending:THREE.AdditiveBlending, depthWrite:false }));
+  bloom2.scale.set(4.6,4.6,4.6);
+  group.add(bloom2);
+
+  // orbiting particle field — fine dust bridging the network and the starfield
   const PARTICLES = 900;
   const positions = new Float32Array(PARTICLES*3);
   const speeds = new Float32Array(PARTICLES);
@@ -395,7 +486,7 @@
   }
   const particleGeo = new THREE.BufferGeometry();
   particleGeo.setAttribute('position', new THREE.BufferAttribute(positions,3));
-  const particleMat = new THREE.PointsMaterial({ color:0xffffff, size:0.02, transparent:true, opacity:0.6 });
+  const particleMat = new THREE.PointsMaterial({ map:whiteGlowTex, color:0xbfe9ff, size:0.05, transparent:true, opacity:0.75, depthWrite:false, blending:THREE.AdditiveBlending });
   const particles = new THREE.Points(particleGeo, particleMat);
   group.add(particles);
 
@@ -412,58 +503,5 @@
     core.rotation.x = t*0.06;
     core2.rotation.y = -t*0.09;
     core2.rotation.x = t*0.04;
-    particles.rotation.y = t*0.03;
-
-    group.rotation.y += ( (mouseX*0.6) - group.rotation.y ) * 0.02;
-    group.rotation.x += ( (-mouseY*0.4) - group.rotation.x ) * 0.02;
-
-    const pulse = 1 + Math.sin(t*1.2)*0.03;
-    core.scale.setScalar(pulse);
-
-    renderer.render(scene, camera);
-    requestAnimationFrame(animate);
-  }
-  animate();
-})();
-
-/* ============ live release fetch (no manual updates needed) ============ */
-(function(){
-  const btn = document.getElementById('downloadBtn');
-  const btn2 = document.getElementById('downloadBtn2');
-  const label = document.getElementById('downloadLabel');
-  const label2 = document.getElementById('downloadLabel2');
-  const meta = document.getElementById('releaseMeta');
-
-  async function loadRelease(){
-    try{
-      const res = await fetch('/api/latest-release', { cache:'no-store' });
-      const data = await res.json();
-
-      if(!res.ok || data.error){
-        throw new Error(data.error || 'unknown error');
-      }
-
-      btn.href = data.downloadUrl;
-      btn.onclick = () => { window.location.href = data.downloadUrl; };
-      btn.classList.remove('is-disabled');
-      btn2.classList.remove('is-disabled');
-      label.textContent = 'Download ' + (data.version || 'latest');
-      label2.textContent = 'Download ' + (data.version || 'latest');
-
-      const sizeMb = data.assetSize ? (data.assetSize/1048576).toFixed(1)+' MB' : '';
-      meta.innerHTML = '<span class="pulse-dot"></span> <span class="tag">' + (data.version||'latest') + '</span> <span>' + (sizeMb ? sizeMb : 'source archive') + '</span>';
-    }catch(err){
-      label.textContent = 'Download unavailable';
-      label2.textContent = 'Download unavailable';
-      meta.innerHTML = '<span>Could not reach release server — check Vercel env vars</span>';
-      console.error('Tehzeeb AI OS: release fetch failed:', err);
-    }
-  }
-
-  loadRelease();
-  // refresh periodically so a brand-new release shows up without a page reload
-  setInterval(loadRelease, 5*60*1000);
-})();
-</script>
-</body>
-</html>
+    nodeGroup.rotation.y = t*0.12;
+    nodeGroup.rotation.x = t*0
